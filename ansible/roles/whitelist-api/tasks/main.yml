@@ -1,0 +1,63 @@
+---
+# ansible/roles/whitelist-api/tasks/main.yml
+
+- name: Python パッケージインストール
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-pip
+      - python3-venv
+    state: present
+    update_cache: true
+
+- name: whitelist-api ディレクトリ作成
+  ansible.builtin.file:
+    path: /opt/whitelist-api
+    state: directory
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+    mode: "0755"
+
+- name: whitelist-api ソースをコピー
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../whitelist-api/"
+    dest: /opt/whitelist-api/
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+    mode: "0644"
+  notify: restart whitelist-api
+
+- name: Python venv 作成
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/whitelist-api/venv
+    creates: /opt/whitelist-api/venv
+
+- name: pip 依存関係インストール
+  ansible.builtin.pip:
+    requirements: /opt/whitelist-api/requirements.txt
+    virtualenv: /opt/whitelist-api/venv
+
+- name: .env ファイル生成
+  ansible.builtin.template:
+    src: whitelist-api.env.j2
+    dest: /opt/whitelist-api/.env
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+    mode: "0600"
+  notify: restart whitelist-api
+
+- name: whitelist-api systemd サービス配置
+  ansible.builtin.template:
+    src: whitelist-api.service.j2
+    dest: /etc/systemd/system/whitelist-api.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart whitelist-api
+
+- name: whitelist-api サービス有効化・起動
+  ansible.builtin.systemd:
+    name: whitelist-api
+    enabled: true
+    state: started
+    daemon_reload: true

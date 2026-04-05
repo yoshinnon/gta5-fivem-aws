@@ -1,0 +1,34 @@
+---
+# ansible/roles/mods/tasks/main.yml
+
+- name: git がインストールされていることを確認
+  ansible.builtin.apt:
+    name: git
+    state: present
+
+- name: MOD リポジトリをクローン/更新
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ fivem_resources_dir }}/{{ item.name }}"
+    version: "{{ item.branch }}"
+    force: true
+    update: true
+  loop: "{{ mod_repos }}"
+  become: true
+  become_user: "{{ fivem_user }}"
+  register: mod_update
+  notify: restart fivem
+
+- name: MOD ディレクトリのオーナー設定
+  ansible.builtin.file:
+    path: "{{ fivem_resources_dir }}/{{ item.name }}"
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+    recurse: true
+  loop: "{{ mod_repos }}"
+
+- name: 更新された MOD を表示
+  ansible.builtin.debug:
+    msg: "Updated: {{ item.item.name }} → {{ item.after | default('no change') }}"
+  loop: "{{ mod_update.results }}"
+  when: item.changed

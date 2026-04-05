@@ -1,0 +1,240 @@
+name: FiveM Infrastructure CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'ansible/**'
+      - 'whitelist-api/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deploy target (dev / prd)'
+        required: true
+        default: 'dev'
+      action:
+        description: 'Action (plan / apply / provision)'
+        required: true
+        default: 'plan'
+
+env:
+  TF_VERSION: '1.8.0'
+
+jobs:
+  # -----------------------------------------------
+  # Terraform Lint
+  # -----------------------------------------------
+  tf-lint:
+    name: Terraform Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt check (dev)
+        run: terraform -chdir=terraform/environments/dev fmt -check -recursive
+
+      - name: Terraform fmt check (prd)
+        run: terraform -chdir=terraform/environments/prd fmt -check -recursive
+
+      - name: Terraform validate (dev)
+        run: |
+          terraform -chdir=terraform/environments/dev init -backend=false
+          terraform -chdir=terraform/environments/dev validate
+
+      - name: Terraform validate (prd)
+        run: |
+          terraform -chdir=terraform/environments/prd init -backend=false
+          terraform -chdir=terraform/environments/prd validate
+
+  # -----------------------------------------------
+  # Whitelist API テスト
+  # -----------------------------------------------
+  api-test:
+    name: Whitelist API Unit Tests
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: rootpass
+          MARIADB_DATABASE: fivem
+          MARIADB_USER: fivem
+          MARIADB_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r whitelist-api/requirements.txt pytest pytest-asyncio httpx
+
+      - name: Start API server
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_NAME: fivem
+          DB_USER: fivem
+          DB_PASSWORD: testpass
+          API_TOKEN: test-token-ci
+          ENV: dev
+        run: |
+          cd whitelist-api
+          # テーブル作成
+          python -c "
+          import aiomysql, asyncio
+          async def setup():
+              conn = await aiomysql.connect(host='127.0.0.1',port=3306,user='fivem',password='testpass',db='fivem')
+              async with conn.cursor() as c:
+                  await c.execute('''CREATE TABLE IF NOT EXISTS whitelist (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    steam_id VARCHAR(64) NOT NULL UNIQUE,
+                    cfx_id VARCHAR(64),discord_id VARCHAR(64),
+                    note VARCHAR(255),added_by VARCHAR(64) DEFAULT \"api\",
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                  )''')
+              conn.close()
+          asyncio.run(setup())
+          "
+          uvicorn main:app --host 0.0.0.0 --port 8000 &
+          sleep 3
+
+      - name: Run API tests
+        run: python whitelist-api/test_api.py --host http://localhost:8000 --token test-token-ci
+
+  # -----------------------------------------------
+  # Terraform Plan (PR 時)
+  # -----------------------------------------------
+  tf-plan:
+    name: Terraform Plan (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    needs: [tf-lint]
+    if: github.event_name == 'pull_request'
+    strategy:
+      matrix:
+        env: [dev, prd]
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[format('AWS_ROLE_ARN_{0}', matrix.env)] }}
+          aws-region: ${{ matrix.env == 'dev' && 'ap-northeast-1' || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init & Plan
+        id: plan
+        run: |
+          cd terraform/environments/${{ matrix.env }}
+          cp terraform.tfvars.example terraform.tfvars
+          terraform init
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+
+      - name: PR にプラン結果をコメント
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/environments/${{ matrix.env }}/plan.txt', 'utf8');
+            const body = `## Terraform Plan - \`${{ matrix.env }}\`\n\`\`\`\n${plan.slice(0, 60000)}\n\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+  # -----------------------------------------------
+  # Terraform Apply + Ansible Provision (main ブランチ)
+  # -----------------------------------------------
+  deploy:
+    name: Deploy (${{ github.event.inputs.environment || 'dev' }})
+    runs-on: ubuntu-latest
+    needs: [tf-lint, api-test]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set env vars
+        id: vars
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+          echo "env=$ENV" >> $GITHUB_OUTPUT
+          echo "region=$( [ '$ENV' = 'prd' ] && echo 'us-east-1' || echo 'ap-northeast-1' )" >> $GITHUB_OUTPUT
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[format('AWS_ROLE_ARN_{0}', steps.vars.outputs.env)] }}
+          aws-region: ${{ steps.vars.outputs.region }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Apply
+        if: ${{ github.event.inputs.action != 'provision' }}
+        run: |
+          cd terraform/environments/${{ steps.vars.outputs.env }}
+          echo '${{ secrets[format("TFVARS_{0}", steps.vars.outputs.env)] }}' > terraform.tfvars
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Get server IP
+        id: server_ip
+        run: |
+          cd terraform/environments/${{ steps.vars.outputs.env }}
+          IP=$(terraform output -raw server_public_ip)
+          echo "ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo '${{ secrets[format("SSH_PRIVATE_KEY_{0}", steps.vars.outputs.env)] }}' > ~/.ssh/fivem.pem
+          chmod 600 ~/.ssh/fivem.pem
+
+      - name: Ansible Provision
+        if: ${{ github.event.inputs.action != 'plan' }}
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          pip install ansible
+          cd ansible
+          echo '${{ secrets.VAULT_PASSWORD }}' > .vault_pass
+          chmod 600 .vault_pass
+          # インベントリを動的に生成
+          cat > inventory/ci_hosts.yml << EOF
+          all:
+            hosts:
+              fivem-${{ steps.vars.outputs.env }}:
+                ansible_host: ${{ steps.server_ip.outputs.ip }}
+                ansible_user: ubuntu
+                ansible_ssh_private_key_file: ~/.ssh/fivem.pem
+          EOF
+          ansible-playbook -i inventory/ci_hosts.yml site.yml \
+            --limit fivem-${{ steps.vars.outputs.env }} \
+            --vault-password-file .vault_pass

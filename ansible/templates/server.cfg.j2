@@ -1,0 +1,66 @@
+# FiveM server.cfg - Managed by Ansible ({{ env }})
+# 手動編集不可。ansible/group_vars/{{ env }}.yml を変更して ansible-playbook を再実行すること
+
+# ライセンス
+sv_licenseKey "{{ fivem_license_key }}"
+sv_steamApiKey "{{ fivem_steam_api_key }}"
+
+# サーバー情報
+sv_hostname "{{ fivem_server_name }}"
+sv_maxclients {{ fivem_max_clients }}
+sv_projectName "VCR GTA"
+sv_projectDesc "VCR GTA - {{ env | upper }} Server"
+
+# ネットワーク
+endpoint_add_tcp "0.0.0.0:30120"
+endpoint_add_udp "0.0.0.0:30120"
+
+# 言語・地域
+sets locale "ja-JP"
+
+# ゲームビルド (GTA5 バージョン指定)
+set sv_enforceGameBuild 3095
+
+# ホワイトリスト
+set sv_authMaxVariance 1
+set sv_authMinTrust 5
+
+# OneSync (大人数対応)
+set onesync on
+
+# データベース接続文字列
+set mysql_connection_string "mysql://{{ db_user }}:{{ db_password }}@{{ db_host }}:{{ db_port }}/{{ db_name }}"
+
+# Mumble Voice Chat
+{% if fivem_voice_enabled %}
+setr voice_useNativeAudio true
+setr voice_useSendingRangeOnly true
+setr voice_defaultCycle "CAPS"
+setr voice_proximity {{ fivem_voice_proximity }}
+{% endif %}
+
+# txAdmin
+sets txAdminServerMode true
+
+# リソース読み込み (MOD の順序を制御)
+ensure mapmanager
+ensure chat
+ensure spawnmanager
+ensure sessionmanager
+ensure basic-gamemode
+ensure hardcap
+ensure rconlog
+
+# VCR GTA カスタムリソース
+{% for repo in mod_repos %}
+ensure {{ repo.name }}
+{% endfor %}
+
+# プレイヤー設定
+add_ace builtin.everyone command.quit deny
+add_ace builtin.everyone command allow
+
+# アドミングループ
+add_principal identifier.steam:YOUR_STEAM_HEX_ID group.admin
+add_ace group.admin command allow
+add_ace group.admin command.quit allow

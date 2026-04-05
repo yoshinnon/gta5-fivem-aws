@@ -1,0 +1,8 @@
+# terraform/environments/dev/terraform.tfvars
+# コピーして実際の値を記入すること (git 管理外にすること)
+
+project           = "fivem-vcrgta"
+aws_region        = "ap-northeast-1"
+key_name          = "your-dev-key-pair"          # AWS コンソールで作成した Key Pair 名
+ami_id            = "ami-0d52744d6551d851e"       # Ubuntu 24.04 LTS (ap-northeast-1) ※要確認
+admin_cidr_blocks = ["YOUR_HOME_IP/32"]           # SSH/txAdmin を許可する IP

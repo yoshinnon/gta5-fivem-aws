@@ -1,0 +1,104 @@
+---
+# ansible/roles/mariadb/tasks/main.yml
+
+- name: MariaDB インストール (ローカルの場合のみ)
+  when: not use_rds
+  block:
+    - name: MariaDB パッケージインストール
+      ansible.builtin.apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+          - python3-pymysql
+        state: present
+        update_cache: true
+
+    - name: MariaDB サービス起動・有効化
+      ansible.builtin.systemd:
+        name: mariadb
+        enabled: true
+        state: started
+
+    - name: MariaDB root パスワード設定
+      community.mysql.mysql_user:
+        name: root
+        password: "{{ db_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+        host_all: true
+        state: present
+
+    - name: .my.cnf を配置 (root アクセス用)
+      ansible.builtin.template:
+        src: my.cnf.j2
+        dest: /root/.my.cnf
+        mode: "0600"
+
+    - name: 匿名ユーザー削除
+      community.mysql.mysql_user:
+        name: ''
+        host_all: true
+        state: absent
+        login_user: root
+        login_password: "{{ db_root_password }}"
+
+    - name: test データベース削除
+      community.mysql.mysql_db:
+        name: test
+        state: absent
+        login_user: root
+        login_password: "{{ db_root_password }}"
+
+    - name: FiveM データベース作成
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        encoding: utf8mb4
+        collation: utf8mb4_unicode_ci
+        state: present
+        login_user: root
+        login_password: "{{ db_root_password }}"
+
+    - name: FiveM DBユーザー作成・権限付与
+      community.mysql.mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        priv: "{{ db_name }}.*:ALL"
+        host: "{{ db_host }}"
+        state: present
+        login_user: root
+        login_password: "{{ db_root_password }}"
+
+# --- スキーマ初期化 ---
+- name: ホワイトリストテーブル作成
+  community.mysql.mysql_query:
+    login_db: "{{ db_name }}"
+    login_user: "{{ db_user }}"
+    login_password: "{{ db_password }}"
+    login_host: "{{ db_host }}"
+    query: |
+      CREATE TABLE IF NOT EXISTS whitelist (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        steam_id    VARCHAR(64)  NOT NULL UNIQUE,
+        cfx_id      VARCHAR(64)  DEFAULT NULL,
+        discord_id  VARCHAR(64)  DEFAULT NULL,
+        note        VARCHAR(255) DEFAULT NULL,
+        added_by    VARCHAR(64)  DEFAULT 'api',
+        created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_steam_id (steam_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+- name: バン管理テーブル作成
+  community.mysql.mysql_query:
+    login_db: "{{ db_name }}"
+    login_user: "{{ db_user }}"
+    login_password: "{{ db_password }}"
+    login_host: "{{ db_host }}"
+    query: |
+      CREATE TABLE IF NOT EXISTS bans (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        identifier  VARCHAR(128) NOT NULL,
+        reason      TEXT,
+        banned_by   VARCHAR(64)  DEFAULT 'system',
+        expires_at  DATETIME     DEFAULT NULL,
+        created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_identifier (identifier)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

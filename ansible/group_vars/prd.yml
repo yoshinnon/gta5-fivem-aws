@@ -1,0 +1,54 @@
+# ansible/group_vars/prd.yml
+---
+env: prd
+
+# FiveM
+fivem_user: fivem
+fivem_dir: /opt/fivem
+fivem_server_dir: "{{ fivem_dir }}/server"
+fivem_resources_dir: "{{ fivem_dir }}/resources"
+fivem_artifacts_url: "https://runtime.fivem.net/artifacts/fivem/build_proot_linux/master"
+
+fivem_server_name: "VCR GTA - Official Server"
+fivem_max_clients: 128
+fivem_license_key: "{{ vault_fivem_license_key }}"
+fivem_steam_api_key: "{{ vault_steam_api_key }}"
+fivem_txadmin_port: 40120
+
+# Mumble Voice
+fivem_voice_enabled: true
+fivem_voice_proximity: 30.0
+
+# MariaDB (Phase 3 で RDS に切替: use_rds: true)
+use_rds: false
+db_host: "127.0.0.1"
+db_port: 3306
+db_name: fivem
+db_user: fivem
+db_password: "{{ vault_db_password }}"
+db_root_password: "{{ vault_db_root_password }}"
+# RDS 切替時はこちらを有効化
+# use_rds: true
+# db_host: "fivem-prd.xxxxxxxx.us-east-1.rds.amazonaws.com"
+
+# Whitelist API
+whitelist_api_port: 8000
+whitelist_api_token: "{{ vault_whitelist_api_token }}"
+whitelist_api_allowed_ips:
+  - "YOUR_DISCORD_BOT_SERVER_IP"  # Discord Bot サーバー IP に変更
+
+# MOD リポジトリ
+mod_repos:
+  - name: vcr-gta-scripts
+    repo: "https://github.com/your-org/vcr-gta-scripts.git"
+    branch: main
+  - name: vcr-gta-vehicles
+    repo: "https://github.com/your-org/vcr-gta-vehicles.git"
+    branch: main
+  - name: vcr-gta-maps
+    repo: "https://github.com/your-org/vcr-gta-maps.git"
+    branch: main
+
+# DDoS / iptables レートリミット (prd は厳しめ)
+udp_rate_limit: "50/s"
+udp_rate_burst: 100

@@ -1,0 +1,116 @@
+---
+# ansible/roles/fivem/tasks/main.yml
+
+- name: FiveM ユーザー作成
+  ansible.builtin.user:
+    name: "{{ fivem_user }}"
+    shell: /bin/bash
+    home: "{{ fivem_dir }}"
+    create_home: true
+    system: true
+
+- name: 必要ディレクトリ作成
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+    mode: "0755"
+  loop:
+    - "{{ fivem_dir }}"
+    - "{{ fivem_server_dir }}"
+    - "{{ fivem_resources_dir }}"
+
+- name: 依存パッケージインストール
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - xz-utils
+      - git
+      - lib32gcc-s1
+      - lib32stdc++6
+    state: present
+    update_cache: true
+
+# --- FXServer Artifacts 取得 ---
+- name: 最新 Artifacts ビルド番号を取得
+  ansible.builtin.uri:
+    url: "{{ fivem_artifacts_url }}/.build"
+    return_content: true
+  register: fivem_build_info
+
+- name: ビルド番号をセット
+  ansible.builtin.set_fact:
+    fivem_build: "{{ fivem_build_info.content | trim }}"
+
+- name: FXServer tarball をダウンロード
+  ansible.builtin.get_url:
+    url: "{{ fivem_artifacts_url }}/{{ fivem_build }}/fx.tar.xz"
+    dest: "/tmp/fx.tar.xz"
+    mode: "0644"
+  register: fivem_download
+
+- name: FXServer を展開
+  ansible.builtin.unarchive:
+    src: "/tmp/fx.tar.xz"
+    dest: "{{ fivem_server_dir }}"
+    remote_src: true
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+  when: fivem_download.changed
+  notify: restart fivem
+
+- name: run.sh に実行権限付与
+  ansible.builtin.file:
+    path: "{{ fivem_server_dir }}/run.sh"
+    mode: "0755"
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+
+# --- server.cfg 配置 ---
+- name: server.cfg をテンプレートから生成
+  ansible.builtin.template:
+    src: server.cfg.j2
+    dest: "{{ fivem_dir }}/server.cfg"
+    owner: "{{ fivem_user }}"
+    group: "{{ fivem_user }}"
+    mode: "0640"
+  notify: restart fivem
+
+# --- systemd サービス登録 ---
+- name: fivem.service を配置
+  ansible.builtin.template:
+    src: fivem.service.j2
+    dest: /etc/systemd/system/fivem.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart fivem
+
+- name: FiveM サービス有効化・起動
+  ansible.builtin.systemd:
+    name: fivem
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- iptables DDoS 対策 ---
+- name: iptables UDP flood レートリミット設定
+  ansible.builtin.iptables:
+    chain: INPUT
+    protocol: udp
+    destination_port: "30120"
+    match: hashlimit
+    hashlimit_above: "{{ udp_rate_limit }}"
+    hashlimit_burst: "{{ udp_rate_burst }}"
+    hashlimit_mode: srcip
+    hashlimit_name: fivem_udp
+    jump: DROP
+    comment: "FiveM UDP rate limit"
+  notify: save iptables
+
+- name: iptables ルールを永続化
+  ansible.builtin.apt:
+    name: iptables-persistent
+    state: present

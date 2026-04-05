@@ -1,0 +1,69 @@
+---
+# ansible/site.yml
+# 使用例:
+#   dev 全構築:   ansible-playbook -i inventory/hosts.yml site.yml --limit dev --vault-password-file .vault_pass
+#   prd 全構築:   ansible-playbook -i inventory/hosts.yml site.yml --limit prd --vault-password-file .vault_pass
+#   MOD更新のみ:  ansible-playbook -i inventory/hosts.yml site.yml --limit prd --tags mods --vault-password-file .vault_pass
+
+- name: FiveM サーバー フルセットアップ
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - group_vars/vault.yml
+
+  pre_tasks:
+    - name: Ubuntu 24.04 確認
+      ansible.builtin.assert:
+        that: ansible_distribution == "Ubuntu" and ansible_distribution_major_version == "24"
+        fail_msg: "Ubuntu 24.04 LTS が必要です"
+
+    - name: apt update
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: 基本パッケージ一括インストール
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - wget
+          - unzip
+          - xz-utils
+          - iptables-persistent
+          - htop
+          - tmux
+          - fail2ban
+        state: present
+
+  roles:
+    - role: mariadb
+      tags: [db, mariadb]
+
+    - role: fivem
+      tags: [fivem, server]
+
+    - role: mods
+      tags: [mods, resources]
+
+    - role: whitelist-api
+      tags: [api, whitelist]
+
+  post_tasks:
+    - name: fail2ban 有効化 (SSH ブルートフォース対策)
+      ansible.builtin.systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    - name: セットアップ完了メッセージ
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          FiveM Server Setup Complete!
+          ENV: {{ env }}
+          FiveM Port: 30120
+          txAdmin: http://{{ ansible_host }}:40120
+          Whitelist API: http://{{ ansible_host }}:8000
+          ========================================

@@ -1,0 +1,15 @@
+---
+# ansible/roles/fivem/handlers/main.yml
+
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart fivem
+  ansible.builtin.systemd:
+    name: fivem
+    state: restarted
+
+- name: save iptables
+  ansible.builtin.command: netfilter-persistent save
+  changed_when: true
