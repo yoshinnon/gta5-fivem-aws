@@ -1,0 +1,5 @@
+---
+- name: restart fivem
+  ansible.builtin.systemd:
+    name: fivem
+    state: restarted

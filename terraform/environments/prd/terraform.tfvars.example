@@ -1,0 +1,11 @@
+# terraform/environments/prd/terraform.tfvars
+# コピーして実際の値を記入すること (git 管理外にすること)
+
+project           = "fivem-vcrgta"
+aws_region        = "us-east-1"
+instance_type     = "c5.metal"                   # または m5.metal (在庫状況に応じて変更)
+key_name          = "your-prd-key-pair"
+ami_id            = "ami-0e86e20dae9224db8"       # Ubuntu 24.04 LTS (us-east-1) ※要確認
+admin_cidr_blocks = ["YOUR_OFFICE_IP/32"]
+api_cidr_blocks   = ["0.0.0.0/0"]               # Discord Bot IP に絞ること推奨
+alert_email       = "your-alert@example.com"

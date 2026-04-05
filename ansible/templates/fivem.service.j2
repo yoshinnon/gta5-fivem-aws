@@ -1,0 +1,31 @@
+[Unit]
+Description=FiveM (FXServer) - {{ env | upper }}
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User={{ fivem_user }}
+Group={{ fivem_user }}
+WorkingDirectory={{ fivem_server_dir }}
+
+ExecStart={{ fivem_server_dir }}/run.sh \
+  +exec {{ fivem_dir }}/server.cfg
+
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fivem
+
+# セキュリティ強化
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

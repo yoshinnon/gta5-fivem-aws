@@ -1,0 +1,39 @@
+---
+# ansible/update-config.yml
+# server.cfg と MOD のみ更新して FiveM を再起動する軽量プレイブック
+# 使用例:
+#   dev: ansible-playbook -i inventory/hosts.yml update-config.yml --limit dev --vault-password-file .vault_pass
+#   prd: ansible-playbook -i inventory/hosts.yml update-config.yml --limit prd --vault-password-file .vault_pass
+
+- name: FiveM 設定更新 & 再起動
+  hosts: all
+  become: true
+  vars_files:
+    - group_vars/vault.yml
+
+  tasks:
+    - name: server.cfg を更新
+      ansible.builtin.template:
+        src: templates/server.cfg.j2
+        dest: "{{ fivem_dir }}/server.cfg"
+        owner: "{{ fivem_user }}"
+        group: "{{ fivem_user }}"
+        mode: "0640"
+      notify: restart fivem
+
+    - name: MOD リポジトリを最新化
+      ansible.builtin.git:
+        repo: "{{ item.repo }}"
+        dest: "{{ fivem_resources_dir }}/{{ item.name }}"
+        version: "{{ item.branch }}"
+        force: true
+        update: true
+      loop: "{{ mod_repos }}"
+      become_user: "{{ fivem_user }}"
+      notify: restart fivem
+
+  handlers:
+    - name: restart fivem
+      ansible.builtin.systemd:
+        name: fivem
+        state: restarted
